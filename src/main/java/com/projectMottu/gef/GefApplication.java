@@ -13,4 +13,5 @@ public class GefApplication {
         System.out.println("Bem vindo a API MOTTU");
 	}
 
+     // http://localhost:8080/swagger-ui/index.html#/
 }
