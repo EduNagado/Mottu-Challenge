@@ -36,14 +36,17 @@ jobs:
     needs: build
     permissions:
       id-token: write   
-      contents: read    
+      contents: read   
 
     steps:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: java-app
-      
+
+      - name: List downloaded files (debug)
+        run: ls -R
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -57,4 +60,4 @@ jobs:
         with:
           app-name: 'GefMottu'
           slot-name: 'Production'
-          package: 'java-app/*.jar'
+          package: 'java-app/*SNAPSHOT.jar'
