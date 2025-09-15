@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read # necessário para actions/checkout
+      contents: read 
 
     steps:
       - name: Checkout repository
@@ -36,7 +36,7 @@ jobs:
     needs: build
     permissions:
       id-token: write   
-      contents: read   
+      contents: read    
 
     steps:
       - name: Download build artifact
@@ -60,5 +60,4 @@ jobs:
         with:
           app-name: 'GefMottu'
           slot-name: 'Production'
-          package: 'java-app/gef-0.0.1-SNAPSHOT.jar'
-
+          package: 'gef-0.0.1-SNAPSHOT.jar'
