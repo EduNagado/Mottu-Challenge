@@ -43,7 +43,7 @@ jobs:
       - name: Login Azure
         uses: azure/login@v2
         with:
-          auth-type: 'service-principal'
+          auth-type: 'SERVICE_PRINCIPAL' 
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -55,4 +55,5 @@ jobs:
           slot-name: 'production'
           package: 'gef-0.0.1-SNAPSHOT.jar'
           
+
 
