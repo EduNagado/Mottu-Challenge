@@ -57,8 +57,9 @@ jobs:
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'GefMottu'
+          app-name: 'Gef-Mottu-Dev-App'
           slot-name: 'Production'
-          package: 'gef-0.0.1-SNAPSHOT.jar'
+          package: 'build/libs/gef-0.0.1-SNAPSHOT.jar'
+
 
 
