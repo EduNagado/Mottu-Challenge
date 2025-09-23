@@ -50,9 +50,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_1142D323C621474CAAFEF35C2BA8D44C }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_0448DC261759454785FC32148D3C7921 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_087AB80E2E4542DBBF8F78D8BBD6DFA5 }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:   ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id:  ${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -61,3 +61,4 @@ jobs:
           app-name: 'GefMottu'
           slot-name: 'Production'
           package: 'gef-0.0.1-SNAPSHOT.jar'
+
