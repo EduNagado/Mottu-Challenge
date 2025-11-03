@@ -19,9 +19,11 @@ variables:
   - name: tag
     value: '$(Build.BuildId)'     # tag única por build
   - name: resourceGroup
-    value: 'gef-mottu-dev-rg' # ajuste para o seu Resource Group
+    value: 'gef-mottu-dev-rg'    # Resource Group
   - name: location
-    value: 'brazilsouth'            # ajuste para sua região, ex: eastus
+    value: 'brazilsouth'         # região do Azure
+  - name: appServicePlan
+    value: 'gef-mottu-plan'      # nome do plano do App Service
 
 stages:
   # -----------------------
@@ -90,10 +92,56 @@ stages:
           runOnce:
             deploy:
               steps:
-                - task: AzureWebApp@1
-                  displayName: 'Deploy da imagem no Web App'
+                # --- Criar Resource Group e App Service Plan se não existirem ---
+                - task: AzureCLI@2
+                  displayName: 'Criar Resource Group e App Service Plan se não existirem'
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
-                    appName: '$(appName)'
-                    appType: 'webAppContainer'
-                    containers: '$(acrName).azurecr.io/$(imageName):$(tag)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # Resource Group
+                      RG=$(az group show -n $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
+                      if [ -z "$RG" ]; then
+                        echo "Criando Resource Group..."
+                        az group create --name $(resourceGroup) --location $(location)
+                      else
+                        echo "Resource Group já existe."
+                      fi
+
+                      # App Service Plan
+                      PLAN=$(az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
+                      if [ -z "$PLAN" ]; then
+                        echo "Criando App Service Plan..."
+                        az appservice plan create --name $(appServicePlan) --resource-group $(resourceGroup) --sku B1 --is-linux
+                      else
+                        echo "App Service Plan já existe."
+                      fi
+
+                # --- Criar Web App se não existir ---
+                - task: AzureCLI@2
+                  displayName: 'Criar Web App se não existir'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      APP=$(az webapp show --name $(appName) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
+                      if [ -z "$APP" ]; then
+                        echo "Criando Web App..."
+                        az webapp create --resource-group $(resourceGroup) --plan $(appServicePlan) --name $(appName) --deployment-container-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                      else
+                        echo "Web App já existe. Atualizando imagem..."
+                        az webapp config container set --name $(appName) --resource-group $(resourceGroup) --docker-custom-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                      fi
+
+                # --- Forçar restart do Web App para pegar a nova imagem ---
+                - task: AzureCLI@2
+                  displayName: 'Reiniciar Web App'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "Reiniciando Web App..."
+                      az webapp restart --name $(appName) --resource-group $(resourceGroup)
