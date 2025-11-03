@@ -18,6 +18,10 @@ variables:
     value: 'gefmottu-api'        # nome da imagem Docker
   - name: tag
     value: '$(Build.BuildId)'     # tag única por build
+  - name: resourceGroup
+    value: 'gef-mottu-dev-rg' # ajuste para o seu Resource Group
+  - name: location
+    value: 'brazilsouth'            # ajuste para sua região, ex: eastus
 
 stages:
   # -----------------------
@@ -33,14 +37,30 @@ stages:
         steps:
           - checkout: self
 
-          # Login no Azure e ACR
+          # Login no Azure e criar ACR se não existir
           - task: AzureCLI@2
-            displayName: 'Login no Azure e no ACR'
+            displayName: 'Login no Azure e criar ACR se não existir'
             inputs:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                # Verifica se o ACR existe
+                EXIST=$(az acr show -n $(acrName) --query "name" -o tsv 2>/dev/null || echo "")
+                
+                if [ -z "$EXIST" ]; then
+                  echo "ACR não existe. Criando..."
+                  az acr create \
+                    --name $(acrName) \
+                    --resource-group $(resourceGroup) \
+                    --sku Standard \
+                    --location $(location) \
+                    --admin-enabled true
+                else
+                  echo "ACR já existe."
+                fi
+
+                # Login no ACR
                 az acr login --name $(acrName)
 
           # Build e Push da imagem Docker
