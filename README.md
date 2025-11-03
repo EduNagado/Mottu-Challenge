@@ -15,7 +15,7 @@ Localização instantânea e organizada de cada moto.
 A moto pode estar como: **Em Pátio**, **Em Manutenção**, **Liberada**, **Retirada**, etc. — tudo com atualização centralizada.
 
 ### ✅ Relatórios e Métricas
-Painéis e dados gerados automaticamente para apoiar decisões operacionais e estratégicas.
+Painéis e dados gerados automaticamente para apoiar decisões operacionais e estratégicas..
 
 ### ✅ Integração com QR Codes / IoT
 Rastreabilidade completa e segura para cada moto.

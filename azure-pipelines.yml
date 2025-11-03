@@ -1,7 +1,6 @@
 # =====================================================
 # Azure DevOps Pipeline - Gef Mottu API
 # CI/CD com Docker + Deploy no Azure Web App for Containers
-# Com suporte a slots (staging e production)
 # =====================================================
 
 trigger:
@@ -10,23 +9,21 @@ trigger:
       - master
 
 variables:
-  - group: 'variaveis-segredas'
+  - group: 'variaveis-segredas'   # grupo com credenciais e secrets
   - name: appName
-    value: 'gefmottu-api'
+    value: 'gefmottu-api'        # nome do Web App
   - name: acrName
-    value: 'gefmottuacr'
+    value: 'gefmottuacr'         # nome do Azure Container Registry
   - name: imageName
-    value: 'gefmottu-api'
+    value: 'gefmottu-api'        # nome da imagem Docker
   - name: tag
-    value: '$(Build.BuildId)'
+    value: '$(Build.BuildId)'     # tag única por build
   - name: resourceGroup
-    value: 'gef-mottu-dev-rg'
+    value: 'gef-mottu-dev-rg'    # Resource Group
   - name: location
-    value: 'brazilsouth'
+    value: 'brazilsouth'         # região do Azure
   - name: appServicePlan
-    value: 'gef-mottu-plan'
-  - name: stagingSlot
-    value: 'staging'
+    value: 'gef-mottu-plan'      # nome do plano do App Service
 
 stages:
   # -----------------------
@@ -38,9 +35,11 @@ stages:
       - job: BuildAndPush
         pool:
           vmImage: 'ubuntu-latest'
+
         steps:
           - checkout: self
 
+          # Login no Azure e criar ACR se não existir
           - task: AzureCLI@2
             displayName: 'Login no Azure e criar ACR se não existir'
             inputs:
@@ -48,38 +47,54 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                # Verifica se o ACR existe
                 EXIST=$(az acr show -n $(acrName) --query "name" -o tsv 2>/dev/null || echo "")
+                
                 if [ -z "$EXIST" ]; then
-                  az acr create --name $(acrName) --resource-group $(resourceGroup) --sku Standard --location $(location) --admin-enabled true
+                  echo "ACR não existe. Criando..."
+                  az acr create \
+                    --name $(acrName) \
+                    --resource-group $(resourceGroup) \
+                    --sku Standard \
+                    --location $(location) \
+                    --admin-enabled true
+                else
+                  echo "ACR já existe."
                 fi
+
+                # Login no ACR
                 az acr login --name $(acrName)
 
+          # Build e Push da imagem Docker
           - script: |
               docker build -t $(acrName).azurecr.io/$(imageName):$(tag) .
               docker push $(acrName).azurecr.io/$(imageName):$(tag)
             displayName: 'Build e Push da imagem Docker'
 
+          # Publicar artefato para a stage de deploy
           - publish: $(System.DefaultWorkingDirectory)
             artifact: drop
 
   # -----------------------
-  # 🚀 Stage 2 - Deploy no slot staging
+  # 🚀 Stage 2 - Deploy no Azure Web App for Containers
   # -----------------------
-  - stage: DeployStaging
-    displayName: 'Deploy no slot staging'
+  - stage: Deploy
+    displayName: 'Deploy no Azure Web App (Docker Container)'
     dependsOn: Build
     condition: succeeded()
     jobs:
-      - deployment: DeployStaging
-        environment: 'staging'
+      - deployment: DeployWebApp
+        environment: 'dev'
         pool:
           vmImage: 'ubuntu-latest'
+
         strategy:
           runOnce:
             deploy:
               steps:
+                # --- Criar Resource Group e App Service Plan se não existirem ---
                 - task: AzureCLI@2
-                  displayName: 'Criar RG, App Service Plan e Web App se não existirem'
+                  displayName: 'Criar Resource Group e App Service Plan se não existirem'
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
@@ -88,51 +103,45 @@ stages:
                       # Resource Group
                       RG=$(az group show -n $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
                       if [ -z "$RG" ]; then
+                        echo "Criando Resource Group..."
                         az group create --name $(resourceGroup) --location $(location)
+                      else
+                        echo "Resource Group já existe."
                       fi
+
                       # App Service Plan
                       PLAN=$(az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
                       if [ -z "$PLAN" ]; then
+                        echo "Criando App Service Plan..."
                         az appservice plan create --name $(appServicePlan) --resource-group $(resourceGroup) --sku B1 --is-linux
-                      fi
-                      # Web App
-                      APP=$(az webapp show --name $(appName) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
-                      if [ -z "$APP" ]; then
-                        az webapp create --resource-group $(resourceGroup) --plan $(appServicePlan) --name $(appName) --deployment-container-image-name $(acrName).azurecr.io/$(imageName):$(tag)
-                      fi
-                      # Slot staging
-                      SLOT=$(az webapp deployment slot show --name $(appName) --resource-group $(resourceGroup) --slot $(stagingSlot) --query "name" -o tsv 2>/dev/null || echo "")
-                      if [ -z "$SLOT" ]; then
-                        az webapp deployment slot create --name $(appName) --resource-group $(resourceGroup) --slot $(stagingSlot)
+                      else
+                        echo "App Service Plan já existe."
                       fi
 
+                # --- Criar Web App se não existir ---
                 - task: AzureCLI@2
-                  displayName: 'Deploy da imagem no slot staging'
+                  displayName: 'Criar Web App se não existir'
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
                     scriptLocation: 'inlineScript'
                     inlineScript: |
-                      az webapp config container set --name $(appName) --resource-group $(resourceGroup) --slot $(stagingSlot) --docker-custom-image-name $(acrName).azurecr.io/$(imageName):$(tag)
-                      az webapp restart --name $(appName) --resource-group $(resourceGroup) --slot $(stagingSlot)
+                      APP=$(az webapp show --name $(appName) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
+                      if [ -z "$APP" ]; then
+                        echo "Criando Web App..."
+                        az webapp create --resource-group $(resourceGroup) --plan $(appServicePlan) --name $(appName) --deployment-container-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                      else
+                        echo "Web App já existe. Atualizando imagem..."
+                        az webapp config container set --name $(appName) --resource-group $(resourceGroup) --docker-custom-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                      fi
 
-  # -----------------------
-  # 🔄 Stage 3 - Swap staging -> production
-  # -----------------------
-  - stage: SwapToProduction
-    displayName: 'Swap slot staging -> production'
-    dependsOn: DeployStaging
-    condition: succeeded()
-    jobs:
-      - job: Swap
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: AzureCLI@2
-            displayName: 'Realizar swap staging -> production'
-            inputs:
-              azureSubscription: '$(azureServiceConnection)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                az webapp deployment slot swap --name $(appName) --resource-group $(resourceGroup) --slot $(stagingSlot)
+                # --- Forçar restart do Web App para pegar a nova imagem ---
+                - task: AzureCLI@2
+                  displayName: 'Reiniciar Web App'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "Reiniciando Web App..."
+                      az webapp restart --name $(appName) --resource-group $(resourceGroup)
