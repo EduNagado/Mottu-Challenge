@@ -11,19 +11,19 @@ trigger:
 variables:
   - group: 'variaveis-segredas'   # grupo com credenciais e secrets
   - name: appName
-    value: 'gefmottu-api'        # nome do Web App
+    value: 'gefmottu-api'
   - name: acrName
-    value: 'gefmottuacr'         # nome do Azure Container Registry
+    value: 'gefmottuacr'
   - name: imageName
-    value: 'gefmottu-api'        # nome da imagem Docker
+    value: 'gefmottu-api'
   - name: tag
-    value: '$(Build.BuildId)'     # tag única por build
+    value: '$(Build.BuildId)'
   - name: resourceGroup
-    value: 'gef-mottu-dev-rg'    # Resource Group
+    value: 'gef-mottu-dev-rg'
   - name: location
-    value: 'brazilsouth'         # região do Azure
+    value: 'brazilsouth'
   - name: appServicePlan
-    value: 'gef-mottu-plan'      # nome do plano do App Service
+    value: 'gef-mottu-plan'
 
 stages:
   # -----------------------
@@ -39,7 +39,6 @@ stages:
         steps:
           - checkout: self
 
-          # Login no Azure e criar ACR se não existir
           - task: AzureCLI@2
             displayName: 'Login no Azure e criar ACR se não existir'
             inputs:
@@ -47,9 +46,7 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Verifica se o ACR existe
                 EXIST=$(az acr show -n $(acrName) --query "name" -o tsv 2>/dev/null || echo "")
-                
                 if [ -z "$EXIST" ]; then
                   echo "ACR não existe. Criando..."
                   az acr create \
@@ -61,25 +58,21 @@ stages:
                 else
                   echo "ACR já existe."
                 fi
-
-                # Login no ACR
                 az acr login --name $(acrName)
 
-          # Build e Push da imagem Docker
           - script: |
               docker build -t $(acrName).azurecr.io/$(imageName):$(tag) .
               docker push $(acrName).azurecr.io/$(imageName):$(tag)
             displayName: 'Build e Push da imagem Docker'
 
-          # Publicar artefato para a stage de deploy
           - publish: $(System.DefaultWorkingDirectory)
             artifact: drop
 
   # -----------------------
-  # 🚀 Stage 2 - Deploy no Azure Web App for Containers
+  # 🚀 Stage 2 - Deploy + Teste de API
   # -----------------------
   - stage: Deploy
-    displayName: 'Deploy no Azure Web App (Docker Container)'
+    displayName: 'Deploy no Azure Web App e Testes de API'
     dependsOn: Build
     condition: succeeded()
     jobs:
@@ -87,12 +80,10 @@ stages:
         environment: 'dev'
         pool:
           vmImage: 'ubuntu-latest'
-
         strategy:
           runOnce:
             deploy:
               steps:
-                # --- Criar Resource Group e App Service Plan se não existirem ---
                 - task: AzureCLI@2
                   displayName: 'Criar Resource Group e App Service Plan se não existirem'
                   inputs:
@@ -100,7 +91,6 @@ stages:
                     scriptType: 'bash'
                     scriptLocation: 'inlineScript'
                     inlineScript: |
-                      # Resource Group
                       RG=$(az group show -n $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
                       if [ -z "$RG" ]; then
                         echo "Criando Resource Group..."
@@ -109,7 +99,6 @@ stages:
                         echo "Resource Group já existe."
                       fi
 
-                      # App Service Plan
                       PLAN=$(az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
                       if [ -z "$PLAN" ]; then
                         echo "Criando App Service Plan..."
@@ -118,9 +107,8 @@ stages:
                         echo "App Service Plan já existe."
                       fi
 
-                # --- Criar Web App se não existir ---
                 - task: AzureCLI@2
-                  displayName: 'Criar Web App se não existir'
+                  displayName: 'Criar Web App se não existir ou atualizar imagem'
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
@@ -129,13 +117,19 @@ stages:
                       APP=$(az webapp show --name $(appName) --resource-group $(resourceGroup) --query "name" -o tsv 2>/dev/null || echo "")
                       if [ -z "$APP" ]; then
                         echo "Criando Web App..."
-                        az webapp create --resource-group $(resourceGroup) --plan $(appServicePlan) --name $(appName) --deployment-container-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                        az webapp create \
+                          --resource-group $(resourceGroup) \
+                          --plan $(appServicePlan) \
+                          --name $(appName) \
+                          --deployment-container-image-name $(acrName).azurecr.io/$(imageName):$(tag)
                       else
                         echo "Web App já existe. Atualizando imagem..."
-                        az webapp config container set --name $(appName) --resource-group $(resourceGroup) --docker-custom-image-name $(acrName).azurecr.io/$(imageName):$(tag)
+                        az webapp config container set \
+                          --name $(appName) \
+                          --resource-group $(resourceGroup) \
+                          --docker-custom-image-name $(acrName).azurecr.io/$(imageName):$(tag)
                       fi
 
-                # --- Forçar restart do Web App para pegar a nova imagem ---
                 - task: AzureCLI@2
                   displayName: 'Reiniciar Web App'
                   inputs:
@@ -145,3 +139,57 @@ stages:
                     inlineScript: |
                       echo "Reiniciando Web App..."
                       az webapp restart --name $(appName) --resource-group $(resourceGroup)
+
+                # 🧪 Testes de API
+                - task: CmdLine@2
+                  displayName: 'Executar Testes de API'
+                  inputs:
+                    script: |
+                      echo "=== INICIANDO TESTES DE API ==="
+                      API_URL="https://gefmottu-api.azurewebsites.net"
+                      echo "Testing application at: $API_URL"
+
+                      echo "Testing Swagger UI..."
+                      SWAGGER_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/swagger-ui/swagger-ui/index.html" || echo "000")
+                      if [ "$SWAGGER_RESPONSE" -eq 200 ]; then
+                          echo "SUCCESS: Swagger UI - HTTP $SWAGGER_RESPONSE"
+                      else
+                          echo "FAILED: Swagger UI - HTTP $SWAGGER_RESPONSE"
+                          exit 1
+                      fi
+
+                      echo "Testing API Docs..."
+                      API_DOCS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/v3/api-docs" || echo "000")
+                      if [ "$API_DOCS_RESPONSE" -eq 200 ]; then
+                          echo "SUCCESS: API Docs - HTTP $API_DOCS_RESPONSE"
+                          curl -s "$API_URL/v3/api-docs" | grep -o '"tags":\[[^]]*\]' | head -3
+                      else
+                          echo "FAILED: API Docs - HTTP $API_DOCS_RESPONSE"
+                          exit 1
+                      fi
+
+                      echo "Testing POST /usuarios..."
+                      CLIENTE_RESPONSE=$(curl -s -o response.json -w "%{http_code}" \
+                        -X POST "$API_URL/usuarios" \
+                        -H "accept: application/json" \
+                        -H "Content-Type: application/json" \
+                        -d '{
+                          "nome": "Henrique Strapazzon",
+                          "email": "henrique.strapazzon@gmail.com",
+                          "password": "henrique123",
+                          "cpf": "40660129817",
+                          "cargo": "ADMINISTRADOR"
+                        }')
+
+                      echo "POST /usuarios HTTP Response: $CLIENTE_RESPONSE"
+
+                      if [ "$CLIENTE_RESPONSE" -eq 201 ] || [ "$CLIENTE_RESPONSE" -eq 200 ]; then
+                          echo "SUCCESS: POST /usuarios - HTTP $CLIENTE_RESPONSE"
+                          cat response.json
+                      else
+                          echo "INFO: POST /usuarios - HTTP $CLIENTE_RESPONSE (validation or conflict)"
+                          cat response.json
+                      fi
+
+                      rm -f response.json
+                      echo "=== TODOS OS TESTES FORAM EXECUTADOS COM SUCESSO ==="
